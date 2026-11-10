@@ -1,0 +1,322 @@
+\documentclass[11pt,a4paper]{amsart}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[margin=2.7cm]{geometry}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\usepackage{listings}
+
+\lstdefinelanguage{lean}{
+  morekeywords={def,abbrev,lemma,theorem,noncomputable,namespace,end,open,import,by,fun,if,then,else,let},
+  sensitive=true, morecomment=[l]{--}, morecomment=[s]{/-}{-/}, morestring=[b]"}
+\lstset{language=lean, basicstyle=\ttfamily\footnotesize, keywordstyle=\bfseries,
+  commentstyle=\itshape\color{black!60}, columns=fullflexible, keepspaces=true,
+  frame=single, framerule=0.3pt, rulecolor=\color{black!30}, xleftmargin=4pt, xrightmargin=4pt,
+  literate={ℕ}{{$\mathbb{N}$}}1 {∑}{{$\sum$}}1 {₂}{{$_2$}}1 {×}{{$\times$}}1
+           {∈}{{$\in$}}1 {≤}{{$\le$}}1 {∀}{{$\forall$}}1 {→}{{$\to$}}1
+           {·}{{$\cdot$}}1 {↔}{{$\leftrightarrow$}}1 {≥}{{$\ge$}}1}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\F}{\mathbb{F}_2}
+\newcommand{\Rm}{\mathcal{R}_m}
+\newcommand{\val}{\operatorname{val}}
+\newcommand{\oeis}[1]{\href{https://oeis.org/#1}{#1}}
+
+\title[Riordan graphs whose complement is Riordan]{Counting labeled Riordan graphs whose complement\\ is a Riordan graph: a proof of the conjectured\\ formula for OEIS A401496, verified in Lean~4}
+\author{A-guy-with-AI}
+\date{November 10, 2026}
+
+\begin{document}
+
+\begin{abstract}
+A Riordan graph of order $n$ is a simple graph on the ordered vertex set $\{1,\dots,n\}$ whose adjacency pattern below the diagonal is a binary Riordan matrix $(g,f)$ of size $n-1$ over $\F$. Let $a(n)$ be the number of Riordan graphs of order $n$ whose complement, with the same vertex order, is again a Riordan graph. The OEIS entry \oeis{A401496} (A.~Mesinga Mwafise, October 2026) records the conjecture
+\[
+  a(n) \;=\; 1+\sum_{k=0}^{n-2} 2^{\lfloor 3k/2\rfloor}\qquad(n\ge 1),
+\]
+supported by exhaustive computation for $n\le 14$. We prove this formula. The proof gives an explicit description of all solutions: apart from the empty and complete graphs, a graph with generating pair $(g,f)$, $\val(g)=v\ge 1$, has a Riordan complement if and only if $t^{v}(f+t)^2\equiv 0 \pmod{t^{n-1}}$; the remaining solutions are the complements of these. The counting statement has been formalized and machine-checked in Lean~4 with Mathlib, using only the standard axioms. As a by-product we obtain $a(n)=8a(n-2)-4$ and closed forms for even and odd $n$. Our result settles the labeled case of a question of Cheon, Jung, Kitaev and Mojallal; the unlabeled case remains open.
+\end{abstract}
+
+\maketitle
+
+\section{Introduction}
+
+Riordan graphs were introduced by Cheon, Jung, Kitaev and Mojallal~\cite{CJKM} as a family of graphs whose adjacency matrices are built from Riordan arrays~\cite{SGWW} over the field $\F$ with two elements. In \cite[Section~2.6]{CJKM} the authors study complements of Riordan graphs, and their Problem~3 asks for a characterization of the Riordan graphs whose complement is again a Riordan graph.
+
+The OEIS entry \oeis{A401496}, contributed by A.~Mesinga Mwafise on October~27, 2026, counts, for each $n$, the Riordan graphs of order $n$ (with fixed vertex labels) whose complement is again Riordan. Its first terms are
+\[
+  1,\ 2,\ 4,\ 12,\ 28,\ 92,\ 220,\ 732,\ \dots
+\]
+The entry states as a conjecture that $a(n)=1+\sum_{k=0}^{n-2}2^{\lfloor 3k/2\rfloor}$. The data were produced by the author's open-source enumerator~\cite{MMsoft}, whose documentation reports the conjecture as checked for $3\le n\le 14$ but unproved. The companion entry \oeis{A401493} counts all Riordan graphs of order $n$.
+
+\begin{theorem}\label{thm:main}
+For every $n\ge 1$,
+\[
+  a(n) \;=\; 1+\sum_{k=0}^{n-2} 2^{\lfloor 3k/2\rfloor},
+\]
+where the sum is empty for $n=1$.
+\end{theorem}
+
+The proof (Sections~\ref{sec:setup}--\ref{sec:count}) is short and elementary. Its key step, Lemma~\ref{lem:char}, compares the first three columns of a Riordan matrix and of its complement. A computation of the same kind appears in the work of Bang et al.~\cite{BvBCDDPS}, who characterize when the sum of two (infinite, proper) Riordan arrays is again a Riordan array; their obstruction is the square of the difference of the two functions $f$. Here the complement is the sum with a fixed matrix, the arrays are truncated, and the function $g$ may vanish at $0$, so we give a self-contained argument. Section~\ref{sec:lean} describes the Lean~4 formalization. Section~\ref{sec:scope} discusses scope and related questions.
+
+\section{Setup}\label{sec:setup}
+
+Throughout, $\F=\{0,1\}$ and $\F[[t]]$ is the ring of formal power series over $\F$. For $m\ge 0$ we write $A_m=\F[[t]]/(t^m)$ and ``$\equiv$'' for congruence modulo $t^m$. For a nonzero series $g$, $\val(g)$ denotes its order (the index of its first nonzero coefficient).
+
+\begin{definition}
+Let $m\ge 0$ and $g,f\in\F[[t]]$ with $f(0)=0$. The \emph{(truncated) Riordan matrix} $R(g,f)$ is the $m\times m$ matrix over $\F$ whose column $j$ ($0\le j<m$) consists of the first $m$ coefficients of $g f^{j}$:
+\[
+  R(g,f)_{i,j} = [t^i]\, g f^{j}\qquad (0\le i,j<m).
+\]
+Let $\Rm$ be the set of all such matrices. Since $f(0)=0$, $R(g,f)$ is lower triangular, and it depends only on $g$ and $f$ modulo $t^m$.
+\end{definition}
+
+Following \cite{CJKM}, a simple graph on the ordered vertex set $\{1,\dots,n\}$ is a \emph{Riordan graph} if its adjacency matrix equals $\left(\begin{smallmatrix}0&0\\ L&0\end{smallmatrix}\right)+\left(\begin{smallmatrix}0&0\\ L&0\end{smallmatrix}\right)^{\!\top}$ for some $L\in\mathcal{R}_{n-1}$; that is, for $i>j$ the vertices $i$ and $j$ are adjacent if and only if $L_{i-2,\,j-1}=1$. This correspondence between Riordan graphs of order $n$ and elements of $\mathcal{R}_{n-1}$ is a bijection, because the graph is determined by its lower triangle. We count graphs (equivalently matrices), not generating pairs $(g,f)$, and we do not identify isomorphic graphs.
+
+Let $P=P_m$ be the $m\times m$ lower triangular matrix with all entries on and below the diagonal equal to~$1$. With $s=1/(1+t)=\sum_{i\ge0}t^i$ we have $s\,t^j=\sum_{i\ge j}t^i$, so $P=R(s,t)\in\Rm$. Taking the complement of a graph of order $n$ replaces $L$ by
+\[
+  C(L)=L+P \qquad(\text{entrywise in }\F).
+\]
+Hence, with $m=n-1$,
+\[
+  a(n)=\#\{R\in\Rm : R+P\in\Rm\},
+\]
+and we call such $R$ \emph{solutions}. The map $C$ is an involution on the set of solutions.
+
+\section{Canonical parameters}\label{sec:canon}
+
+\begin{lemma}\label{lem:canon}
+Let $m\ge1$ and $R=R(g,f)\in\Rm$.
+\begin{enumerate}[label=\textup{(\alph*)}]
+\item If $g\equiv 0$, then $R=0$.
+\item Otherwise let $v=\val(g\bmod t^m)<m$, $r=m-v$, and write $g\equiv t^v u$ with $u(0)=1$. Then $R$ determines $v$, $u \bmod t^{r}$ and $f\bmod t^{r}$, and conversely these data determine $R$.
+\end{enumerate}
+Consequently $|\Rm| = 1+\sum_{r=1}^{m}4^{r-1}$.
+\end{lemma}
+
+\begin{proof}
+(a) Every column $gf^j$ is then $0$ modulo $t^m$.
+
+(b) Column $0$ of $R$ is $g\bmod t^m=t^v u \bmod t^m$, which determines $v$ and $u\bmod t^r$. Since $t^v u f^j$ modulo $t^m$ depends only on $u f^j$ modulo $t^{r}$, the data determine $R$. If $m\ge 2$, column~$1$ gives $t^v uf \bmod t^m$, hence $uf\bmod t^r$, hence $f\bmod t^r$ because $u$ is a unit. If $m=1$, then $r=1$ and $f(0)=0$ already forces $f\equiv0\pmod t$.
+
+For fixed $v$, the classes $u\bmod t^r$ with $u(0)=1$ and $f\bmod t^r$ with $f(0)=0$ each have $2^{r-1}$ choices, and all pairs occur. Summing over $r=m-v\in\{1,\dots,m\}$ and adding the zero matrix gives the count.
+\end{proof}
+
+The count of Lemma~\ref{lem:canon} is the number of Riordan graphs of order $m+1$; it equals $(4^m+2)/3$ (\oeis{A047849}); compare \cite[Proposition~2.8]{CJKM} and \oeis{A401493}.
+
+\section{The characterization}\label{sec:char}
+
+\begin{lemma}\label{lem:char}
+Let $m\ge 2$, let $R=R(g,f)\in\Rm$ with $1\le v=\val(g\bmod t^m)<m$, and let $r=m-v$. Then
+\[
+  R+P\in\Rm \iff t^{v}(f+t)^2\equiv 0 \pmod{t^m}
+  \iff f\equiv t \pmod{t^{\lceil r/2\rceil}} .
+\]
+\end{lemma}
+
+\begin{proof}
+Put $G=(1+t)g$ and $H=1+G$. Since $v\ge1$, $H(0)=1$, so $H$ is a unit of $A_m$. Column $j$ of $R+P$ is $gf^j+st^j=s\,(Gf^j+t^j)$ modulo $t^m$. Hence, for any $h,k$ with $k(0)=0$,
+\begin{equation}\label{eq:cols}
+  R+P=R(h,k) \iff (1+t)\,h\,k^j\equiv Gf^j+t^j \quad\text{for all } 0\le j<m. \tag{$\ast$}
+\end{equation}
+
+\emph{Necessity.} Suppose $R+P=R(h,k)$. The case $j=0$ of \eqref{eq:cols} gives $(1+t)h\equiv G+1=H$, and the case $j=1$ (available since $m\ge2$) then gives $Hk\equiv Gf+t$, so $k\equiv (Gf+t)/H$; note that $k(0)=0$ indeed. If $m\ge3$, the case $j=2$ gives $Hk^2\equiv Gf^2+t^2$, that is
+\[
+  (Gf+t)^2 \equiv H\,(Gf^2+t^2).
+\]
+In characteristic $2$ the left side is $G^2f^2+t^2$ and the right side is $Gf^2+t^2+G^2f^2+Gt^2$. The difference is $G(f^2+t^2)=G(f+t)^2$. Thus $G(f+t)^2\equiv0$. As $G=t^v(1+t)u$ with $(1+t)u$ a unit, this is equivalent to $t^v(f+t)^2\equiv0$. If $m=2$, then $v=1$, and $t^v(f+t)^2$ is divisible by $t^3$ because $(f+t)(0)=0$; so the condition holds automatically.
+
+\emph{Sufficiency.} Suppose $Gd^2\equiv 0$, where $d=f+t$. Define $h=H/(1+t)$ and $k=(Gf+t)/H=t+e$ with $e=Gd/H$; then $k(0)=0$. We have
+\[
+  e^2=\frac{G^2d^2}{H^2}=\frac{G\,(Gd^2)}{H^2}\equiv 0 .
+\]
+We check \eqref{eq:cols}. For $j=0$ it reads $H\equiv G+1$, which is true. For $j\ge1$, the binomial expansions of $(t+e)^j$ and of $G(t+d)^j$ lose every term containing $e^2$, respectively $Gd^2$. Writing $\bar{\jmath}$ for the image of $j$ in $\F$, we obtain
+\[
+  Hk^j \equiv H t^j + \bar{\jmath}\,t^{j-1}He = Ht^j + \bar{\jmath}\, t^{j-1}Gd
+  = Gt^j+t^j+\bar{\jmath}\,t^{j-1}Gd \equiv G(t+d)^j + t^j = Gf^j+t^j .
+\]
+(No negative power of $t$ occurs, since $j=0$ was treated separately.) Hence $R+P=R(h,k)\in\Rm$.
+
+\emph{Coefficients.} In characteristic $2$, $(\sum_i d_it^i)^2=\sum_i d_it^{2i}$. Hence $t^vd^2\equiv0\pmod{t^m}$ if and only if $d_i=0$ whenever $v+2i<m$, i.e.\ whenever $i<\lceil r/2\rceil$. This is $f\equiv t\pmod{t^{\lceil r/2\rceil}}$.
+\end{proof}
+
+\begin{remark}
+The condition of Lemma~\ref{lem:char} involves only $v$ and $f\bmod t^{r}$, in accordance with Lemma~\ref{lem:canon}. For $r=1$ it is automatic.
+\end{remark}
+
+\begin{lemma}\label{lem:zero}
+Let $m\ge1$. If $R\in\Rm$ has first column equal to $0$, then $R=0$.
+\end{lemma}
+
+\begin{proof}
+If $R=R(g,f)$, then $g\equiv0$, so every column $gf^j$ vanishes modulo $t^m$.
+\end{proof}
+
+\section{Counting}\label{sec:count}
+
+\begin{proof}[Proof of Theorem~\ref{thm:main}]
+If $n=1$, then $m=0$; there is exactly one (empty) matrix, and it is a solution, so $a(1)=1$, as claimed. Assume $n\ge2$, so $m=n-1\ge1$.
+
+The matrices $0$ and $P$ are distinct solutions, exchanged by $C$. Classify the remaining solutions $R$ by the top-left entry $R_{0,0}=g(0)$.
+
+\emph{Solutions with $R\ne0$ and $R_{0,0}=0$.} These have $1\le v<m$ (in particular they exist only for $m\ge2$). By Lemmas~\ref{lem:canon} and~\ref{lem:char}, for fixed $v$ (and $r=m-v$) they correspond to pairs $(u\bmod t^r, f\bmod t^r)$ with $u(0)=1$ arbitrary ($2^{r-1}$ choices) and $f\equiv t\pmod{t^{\lceil r/2\rceil}}$ ($2^{r-\lceil r/2\rceil}=2^{\lfloor r/2\rfloor}$ choices, which is also correct for $r=1$). Their number is therefore
+\[
+  N_+=\sum_{r=1}^{m-1}2^{\,r-1+\lfloor r/2\rfloor}.
+\]
+
+\emph{Solutions with $R\ne P$ and $R_{0,0}=1$.} Since $(R+P)_{0,0}=R_{0,0}+1$, the involution $C$ maps solutions with $R_{0,0}=0$ to solutions with $R_{0,0}=1$ and back. If $R_{0,0}=1$ and $R\neq P$, then $C(R)\neq 0$, and $C(R)_{0,0}=0$. Conversely, if $R\ne 0$ and $R_{0,0}=0$, then $C(R)\neq P$ and $C(R)_{0,0}=1$. (Lemma~\ref{lem:zero} guarantees that a nonzero solution with $R_{0,0}=0$ has positive valuation $v<m$, so it is of the type counted by $N_+$.) Hence $C$ is a bijection between the two classes, and the second class also has $N_+$ elements.
+
+Altogether, $a(n)=2+2N_+=2+\sum_{r=1}^{m-1}2^{\,r+\lfloor r/2\rfloor}=2+\sum_{r=1}^{n-2}2^{\lfloor 3r/2\rfloor}$. Isolating $1=2^{\lfloor 3\cdot0/2\rfloor}$ gives the stated formula; for $n=2$ the sum is empty and $a(2)=2$.
+\end{proof}
+
+The proof also yields the explicit list of solutions for $m=n-1\ge1$:
+\begin{enumerate}[label=\textup{(\roman*)},leftmargin=2.2em]
+\item the zero matrix (empty graph) and $P$ (complete graph);
+\item the matrices $R(t^vu,f)$ with $1\le v<m$, $u(0)=1$, and $\val(f+t)\ge\lceil (m-v)/2\rceil$;
+\item the complements $R+P$ of the matrices in (ii).
+\end{enumerate}
+
+\begin{corollary}\label{cor:closed}
+For $n\ge1$ we have $a(n+1)-a(n)=2^{\lfloor 3(n-1)/2\rfloor}$, and $a(n)=8a(n-2)-4$ for $n\ge3$. Moreover
+\[
+  a(2k)=\frac{10\cdot 8^{k-1}+4}{7}\ (k\ge1),\qquad
+  a(2k+1)=\frac{3\cdot 8^{k}+4}{7}\ (k\ge0),
+\]
+and $\sum_{n\ge1}a(n)x^n = \dfrac{x(1-2x)(1+3x)}{(1-x)(1-8x^2)}$.
+\end{corollary}
+
+\begin{proof}
+The first identity is immediate from Theorem~\ref{thm:main}. The two closed forms hold for $k=1$ and $k=0$ respectively, and both satisfy $a(n)=8a(n-2)-4$, which follows from $\lfloor 3(k+2)/2\rfloor=\lfloor 3k/2\rfloor+3$ applied to consecutive differences. The generating function is equivalent to the recurrence with initial values $a(1)=1$, $a(2)=2$, $a(3)=4$.
+\end{proof}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}lrrrrrrrrrrrrrr@{}}
+\toprule
+$n$ & 1&2&3&4&5&6&7&8&9&10&11&12&13&14\\
+\midrule
+$a(n)$ &1&2&4&12&28&92&220&732&1756&5852&14044&46812&112348&374492\\
+\bottomrule
+\end{tabular}
+\caption{Values of Theorem~\ref{thm:main}. They agree with the data of \oeis{A401496}, and with an independent exhaustive enumeration for $n\le 13$ (Section~\ref{sec:checks}).}
+\label{tab:values}
+\end{table}
+
+\begin{remark}[Display of the closed forms in the OEIS]
+In the version of \oeis{A401496} we consulted on November~10, 2026, the closed forms appear as ``$(108^{(k-1)}+4)/7$'' and ``$(38^k+4)/7$''. These evidently stand for $(10\cdot 8^{k-1}+4)/7$ and $(3\cdot 8^{k}+4)/7$, with the multiplication signs lost, as Corollary~\ref{cor:closed} confirms.
+\end{remark}
+
+\section{Formal verification in Lean 4}\label{sec:lean}
+
+The counting statement has been formalized in Lean~4 using Mathlib~\cite{mathlib,lean4}. The file \texttt{A401496.lean} in the accompanying repository contains 1038 lines. It was checked with Lean version \texttt{4.36.0-rc2} and Mathlib commit \texttt{9d581dff\allowbreak f2e41de989072ea63abf3daf69311520}. The definitions follow the OEIS description literally. Matrices are indexed from $0$, a ``jet'' is a function $\mathrm{Fin}\ m\to\F$ (a series modulo $t^m$), and all Riordan matrices are generated by \emph{all} pairs of jets $(g,f)$ with $f(0)=0$:
+\begin{lstlisting}
+abbrev F₂ := ZMod 2
+abbrev Jet (m : ℕ) := Fin m → F₂
+abbrev Mat (m : ℕ) := Vector (Vector F₂ m) m
+
+def riordanMatrix {m : ℕ} (g f : Jet m) : Mat m :=
+  Vector.ofFn fun i => Vector.ofFn fun j => jetMul g (jetPow f j.val) i
+def full (m : ℕ) : Mat m :=
+  Vector.ofFn fun i => Vector.ofFn fun j => if j.val ≤ i.val then 1 else 0
+def complement {m : ℕ} (R : Mat m) : Mat m :=
+  Vector.ofFn fun i => Vector.ofFn fun j => R[i][j] + (full m)[i][j]
+
+def riordanMatrices (m : ℕ) : Finset (Mat m) :=
+  ((Finset.univ : Finset (Jet m × Jet m)).filter
+    (fun p => ∀ i : Fin m, i.val = 0 → p.2 i = 0)).image
+    (fun p => riordanMatrix p.1 p.2)
+def solutions (m : ℕ) : Finset (Mat m) :=
+  let all := riordanMatrices m; all.filter fun R => complement R ∈ all
+def a (n : ℕ) : ℕ := if n = 0 then 0 else (solutions (n - 1)).card
+
+theorem A401496_formula (n : ℕ) (hn : 0 < n) :
+    a n = 1 + ∑ k ∈ Finset.range (n - 1), 2 ^ (3 * k / 2)
+\end{lstlisting}
+Here \texttt{3 * k / 2} is natural-number division, i.e.\ $\lfloor 3k/2\rfloor$. The functions \texttt{jetMul} and \texttt{jetPow} are truncated multiplication and powers, and the file proves that they agree with multiplication in $\F[[t]]$ modulo $t^m$. The statement is therefore about the finite set of matrices actually defined by the OEIS entry, not about a hand-made model of it.
+
+The formal proof follows Sections~\ref{sec:canon}--\ref{sec:count}. The algebraic core (the identities \eqref{eq:cols} and the obstruction $G(f+t)^2$) is proved in an arbitrary commutative ring of characteristic~$2$ and transported to $A_m$. The counting uses an explicit injective parametrization of the solutions with positive valuation, and the involution $C$.
+
+\paragraph{Checks performed.} The file was compiled twice, on two independent occasions, with the same toolchain. Both runs produced no error, no \texttt{sorry} and no \texttt{native\_decide}. \texttt{\#print axioms} reports, for the main theorem and for each of the fifteen principal lemmas, only the standard axioms \texttt{propext}, \texttt{Classical.choice} and \texttt{Quot.sound}. As a sanity check, \texttt{\#eval} of the computable definition for $n=1,\dots,6$ returns \texttt{[1, 2, 4, 12, 28, 92]}.
+
+\paragraph{Integrity.} The SHA-256 digest of the published file is
+\begin{center}\small\texttt{66ded426dce65d5f81df5e790edd39f93e3bcd951eb2cfa86d48dc3ba9778517}.\end{center}
+The compiled working copy differed from it only in line~6, which is a comment. That line was anonymized before publication; no code was changed.
+
+\paragraph{What is and is not formalized.} Theorem~\ref{thm:main} is formalized for all $n\ge1$. The explicit list of solutions and Corollary~\ref{cor:closed} are consequences of the written argument and of elementary algebra, but they are not separate formal statements.
+
+\section{Independent computational checks}\label{sec:checks}
+
+Two scripts are included in the \texttt{checks/} directory of the repository. Neither is needed for the proof, which rests on the argument above and on the Lean verification.
+\begin{itemize}[leftmargin=2em]
+\item \texttt{verif\_riordan\_chatgpt.cpp}, driven by \texttt{enumerate\_chatgpt.py}: an exhaustive enumeration written independently of the proof. For $n\le 13$ it runs over all pairs $(g,f)$, removes duplicate matrices, and counts the matrices whose complement belongs to the set. The counts agree with Table~\ref{tab:values}. The driver also checks the closed forms, the recurrence and the generating function exactly for $n\le 1000$.
+\item \texttt{verify\_characterization.py}: for each $m$ up to a given bound, computes the solution set by brute force. It then checks that a matrix $R(g,f)$ with $1\le\val(g)<m$ is a solution exactly when the condition of Lemma~\ref{lem:char} holds, and that the total agrees with Theorem~\ref{thm:main}.
+\end{itemize}
+
+\section{Scope, novelty and related questions}\label{sec:scope}
+
+\begin{enumerate}[leftmargin=2em]
+\item Theorem~\ref{thm:main} counts labeled graphs: the vertex order is fixed, and the complement must be Riordan with respect to the \emph{same} order. It does not count isomorphism classes. Problem~3 of \cite{CJKM} also asks about graphs whose complement is isomorphic to a Riordan graph. Our results say nothing about that unlabeled version, which remains open as far as we know.
+\item In particular, Theorem~\ref{thm:main} is not a statement about self-complementary Riordan graphs.
+\item As far as we know, the formula was stated only as a conjecture in \oeis{A401496} and in \cite{MMsoft}. We searched the literature cited here and found no proof, but we cannot rule out that one exists elsewhere.
+\end{enumerate}
+
+\section*{Acknowledgements and use of AI}
+
+This work was carried out by the author, who publishes under a pseudonym, in collaboration with two AI systems. Their roles were as follows. Claude (Anthropic) proposed the characterization of Lemma~\ref{lem:char} and the counting argument, wrote the first version of the proof, and independently recompiled and audited the Lean file. ChatGPT (OpenAI) reviewed the proof and fixed several edge cases ($m=1$ and $m=2$, the separate treatment of $j=0$, the identity $e^2=G(Gd^2)/H^2$, and Lemma~\ref{lem:zero}). It also wrote the independent enumeration for $n\le 13$, identified the display issue in the OEIS closed forms, located the references \cite{CJKM,BvBCDDPS}, and wrote the complete Lean formalization. The author directed the project, ran the formal verification, and takes responsibility for the final text. The conjecture and the data are due to A.~Mesinga Mwafise~\cite{MMsoft}.
+
+\begin{thebibliography}{9}
+
+\bibitem{BvBCDDPS}
+C.~Bang, M.~von~Bell, E.~Culver, J.~Dickson, S.~Dimitrov, R.~Perrier and S.~Sundaram,
+\emph{On sums, derivatives, and flips of Riordan arrays},
+J. Integer Seq. \textbf{26} (2023), Article 23.2.7;
+\href{https://arxiv.org/abs/2210.02566}{arXiv:2210.02566}.
+
+\bibitem{CJKM}
+G.-S.~Cheon, J.-H.~Jung, S.~Kitaev and S.~A.~Mojallal,
+\emph{Riordan graphs I: Structural properties},
+Linear Algebra Appl. \textbf{579} (2019), 89--135;
+\href{https://arxiv.org/abs/1710.04604}{arXiv:1710.04604}.
+
+\bibitem{lean4}
+L.~de~Moura and S.~Ullrich,
+\emph{The Lean 4 theorem prover and programming language},
+in: Automated Deduction -- CADE 28, Lecture Notes in Comput. Sci. \textbf{12699}, Springer, 2021, 625--635.
+
+\bibitem{mathlib}
+The mathlib Community,
+\emph{The Lean mathematical library},
+in: Proceedings of the 9th ACM SIGPLAN International Conference on Certified Programs and Proofs (CPP 2020), ACM, 2020, 367--381.
+
+\bibitem{MMsoft}
+A.~Mesinga Mwafise,
+\emph{riordan-graph-enumerator}, version 1.1.0, software,
+\href{https://doi.org/10.5281/zenodo.23676628}{doi:10.5281/zenodo.23676628};
+see also \url{https://github.com/arnauldmwafise/riordan-graph-enumerator}.
+
+\bibitem{OEIS}
+OEIS Foundation Inc.,
+\emph{The On-Line Encyclopedia of Integer Sequences},
+entries \oeis{A401493} and \oeis{A401496} (A.~Mesinga Mwafise, October 27, 2026) and \oeis{A047849},
+\url{https://oeis.org}.
+
+\bibitem{SGWW}
+L.~W.~Shapiro, S.~Getu, W.-J.~Woan and L.~C.~Woodson,
+\emph{The Riordan group},
+Discrete Appl. Math. \textbf{34} (1991), 229--239.
+
+\end{thebibliography}
+
+\end{document}
